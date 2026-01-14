@@ -1,112 +1,90 @@
-import asyncio
-import gc
-
-import aioble
-import bluetooth
+import asyncio, struct, aioble, bluetooth
 
 # Constants
 PRINTER_NAME = "YHK-4118"
-_UART_SERVICE_UUID = bluetooth.UUID("49535343-FE7D-4AE5-8FA9-9FAFD205E455")
-_UART_RX_CHAR_UUID = bluetooth.UUID("49535343-8841-43F4-A8D4-ECBE34729BB3")
+WIDTH_BYTES = 48  # 384 px / 8
+BATCH_LINES = 20  # Send 20 lines per command (960 bytes) to reduce overhead
 
 
-class RawBitmapPrinter:
+
+
+
+class YHKPrinter:
     def __init__(self):
+        self.device = None
         self.connection = None
-        self.rx_char = None
-        self.mtu = 20
-        # GS v 0 [m] [xL xH yL yH]
-        # We define header for 1 line (yL=1, yH=0) and 48 bytes wide (xL=48, xH=0)
-        self.raster_header = bytes([0x1D, 0x76, 0x30, 0x00, 48, 0x00, 0x01, 0x00])
+        self.rx = None
+        self.mtu = 23  # Default BLE MTU
 
-    async def connect(self):
-        print("🔍 Locating printer...")
-        async with aioble.scan(5000) as scanner:
+    async def scan(self, timeout_ms=10000):
+        """Scan for the printer"""
+        print(f"🔍 Scanning for {PRINTER_NAME}...")
+
+        async with aioble.scan(
+            timeout_ms, interval_us=30000, window_us=30000, active=True
+        ) as scanner:
             async for result in scanner:
                 if result.name() == PRINTER_NAME:
-                    print("Locaed Printer!")
-                    try:
-                        self.connection = await result.device.connect(timeout_ms=5000)
-                        # Ask for max MTU to speed up the JS data transfer
-                        self.mtu = await self.connection.exchange_mtu(123) - 3
-                        service = await self.connection.service(_UART_SERVICE_UUID)
-                        self.rx_char = await service.characteristic(_UART_RX_CHAR_UUID)
-                        print(f"✅ Connected (MTU: {self.mtu})")
-                        return True
-                    except Exception as e:
-                        print(f"❌ Connection failed: {e}")
-        return False
+                    print(f"✅ Found: {result.name()}")
+                    return result.device
 
-    async def send_payload(self, data):
-        """Reliable chunked sender with EALREADY prevention"""
+        print("❌ Printer not found")
+        return None
+
+    async def connect(self):
+        """Scan, Connect, and Negotiate MTU"""
+        print(f"🔍 Scanning for {PRINTER_NAME}...")
+        self.device = await self.scan()
+        if not self.device: return False
+
+        print("🔗 Connecting...")
+        self.connection = await self.device.connect(timeout_ms=10000)
+
+        # 1. OPTIMIZATION: Exchange MTU to get max packet size (usually ~247 on ESP32)
+        self.mtu = await self.connection.exchange_mtu(247) - 3
+        print(f"⚡ MTU set to: {self.mtu}")
+
+        service = await self.connection.service(bluetooth.UUID("49535343-FE7D-4AE5-8FA9-9FAFD205E455"))
+        self.rx = await service.characteristic(bluetooth.UUID("49535343-8841-43F4-A8D4-ECBE34729BB3"))
+
+        # Init printer
+        await self.send_raw(b"\x1b\x40\x1d\x49\xf0\x19")
+        return True
+
+    async def send_raw(self, data):
+        """Split data into MTU-sized chunks and send"""
         mv = memoryview(data)
-        for i in range(0, len(mv), self.mtu):
-            chunk = mv[i : i + self.mtu]
-            while True:
-                try:
-                    # Use response=True for reliability with large bitmaps
-                    await self.rx_char.write(chunk, response=True)
-                    break
-                except OSError as e:
-                    if e.errno == 114:  # EALREADY
-                        await asyncio.sleep_ms(5)
-                    else:
-                        raise e
+        sent = 0
+        while sent < len(mv):
+            chunk = mv[sent : sent + self.mtu]
+            await self.rx.write(chunk, response=True)
+            sent += len(chunk)
+            await asyncio.sleep_ms(5) # Yield to BLE stack
 
-    async def print_bitmap(self, bitmap_data):
-        """
-        bitmap_data should be a pre-inverted bytearray from JS.
-        Assumes 48 bytes per line.
-        """
-        num_lines = len(bitmap_data) // 48
-        print(f"🖨️ Printing {num_lines} lines...")
+    async def print_bitmap(self, buf):
+        """2. OPTIMIZATION: Send multiple lines in one command"""
+        total_lines = len(buf) // WIDTH_BYTES
+        mv = memoryview(buf)
+        bytes_per_batch = WIDTH_BYTES * BATCH_LINES
 
-        mv = memoryview(bitmap_data)
+        print(f"🖨️ Printing {total_lines} lines...")
 
-        for y in range(num_lines):
-            line_start = y * 48
-            line_data = mv[line_start : line_start + 48]
+        for i in range(0, len(mv), bytes_per_batch):
+            # Calculate actual lines in this batch (handling the last chunk)
+            chunk = mv[i : i + bytes_per_batch]
+            lines = len(chunk) // WIDTH_BYTES
 
-            # Combine header + line and blast it
-            await self.send_payload(self.raster_header + line_data)
+            # Command: GS v 0 | width(48,0) | height(lines, 0)
+            # This header tells printer "Here comes X lines at once"
+            header = struct.pack("<4s2B2B", b'\x1d\x76\x30\x00', WIDTH_BYTES, 0, lines, 0)
 
-            # Every 10 lines, brief pause to let the printer hardware keep up
-            if y % 10 == 0:
-                await asyncio.sleep_ms(10)
-                gc.collect()
+            await self.send_raw(header + chunk)
+            await asyncio.sleep_ms(20) # Allow printer buffer to process
 
-        # Final feed
-        await self.send_payload(b"\x0a\x0a\x0a")
-        print("✅ Finished")
+        print("✅ Done")
 
+    async def feed_lines(self,lines=3):
+        await self.send_raw(b"\x0a"*lines) # Feed
 
-async def run_print(data_from_js):
-    p = RawBitmapPrinter()
-    if await p.connect():
-        await p.print_bitmap(data_from_js)
-        await p.connection.disconnect()
-
-
-def generate_mock_bitmap(lines=20):
-    """
-    Generates a bytearray of alternating black and white lines.
-    48 bytes per line (384 pixels).
-    """
-    data = bytearray()
-    black_line = bytes([0xFF] * 48)  # 48 bytes of 11111111
-    white_line = bytes([0x00] * 48)  # 48 bytes of 00000000
-
-    for i in range(lines):
-        if i % 2 == 0:
-            data.extend(black_line)
-        else:
-            data.extend(white_line)
-
-    return data
-
-
-# Run the program
-try:
-    asyncio.run(run_print(generate_mock_bitmap(200)))
-except KeyboardInterrupt:
-    print("Stopped")
+    async def disconnect(self):
+        if self.connection: await self.connection.disconnect()

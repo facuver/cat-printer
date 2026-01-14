@@ -341,6 +341,7 @@
                                 "X-Total-Chunks": totalChunks.toString(),
                             },
                             body: chunk,
+                            signal: AbortSignal.timeout(25000), // 15 seconds timeout for each chunk
                         });
 
                         if (!response.ok)

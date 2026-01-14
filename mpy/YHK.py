@@ -12,11 +12,11 @@ import asyncio
 
 import aioble
 import bluetooth
-import framebuf
 
 # Printer Configuration
 PRINTER_NAME = "YHK-4118"
 PRINTER_WIDTH = 384  # pixels (48 bytes)
+DELAY_BETWEEN_LINES = 0
 
 # Microchip Transparent UART Service UUIDs
 _UART_SERVICE_UUID = bluetooth.UUID("49535343-FE7D-4AE5-8FA9-9FAFD205E455")
@@ -63,16 +63,12 @@ class YHKPrinter:
         print(f"🔗 Connecting to {PRINTER_NAME}...")
         try:
             self.connection = await device.connect(timeout_ms=timeout_ms)
-            self.mtu = await self.connection.exchange_mtu(512) - 3
+            self.mtu = await self.connection.exchange_mtu(51) - 3
             print("✅ Connected!")
 
             service = await self.connection.service(_UART_SERVICE_UUID)
             self.rx_char = await service.characteristic(_UART_RX_CHAR_UUID)
-
-            try:
-                self.tx_char = await service.characteristic(_UART_TX_CHAR_UUID)
-            except:
-                self.tx_char = None
+            self.tx_char = await service.characteristic(_UART_TX_CHAR_UUID)
 
             # Initialize printer
             print("📤 Initializing printer...")
@@ -101,13 +97,7 @@ class YHKPrinter:
         """Write data to printer"""
         if not self.rx_char:
             raise RuntimeError("Not connected")
-
-        # Split into chunks if needed (BLE MTU limitation)
-        chunk_size = self.mtu
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i : i + chunk_size]
-            await self.rx_char.write(chunk, response=False)
-            await asyncio.sleep_ms(10)
+        await self.rx_char.write(data, response=False)
 
     async def print_raster_image(self, bitmap_data, width=384, height=None):
         """
@@ -140,41 +130,15 @@ class YHKPrinter:
 
             # Send header + line data
             await self.write(header + bytes(line_data))
-            await asyncio.sleep_ms(30)
+            await asyncio.sleep_ms(DELAY_BETWEEN_LINES)
             # Progress indicator
-            if (i + 1) % 50 == 0 or i == height - 1:
-                pct = (i + 1) / height * 100
-                print(f"   {i + 1}/{height} ({pct:.0f}%)")
+            if (i + 1) % 50 == 0:
+                print(f"   {i + 1}/{height} ")
 
         # Feed paper at the end to eject
         # await self.write(b"\x0a\x0a\x0a\x0a")
         # await asyncio.sleep_ms(100)
         print("✅ Print complete!")
-
-    async def print_framebuffer(self, fb, invert=True):
-        """
-        Print a FrameBuffer directly
-
-        Args:
-            fb: FrameBuffer object (must be 384 pixels wide)
-            invert: If True, invert colors (framebuf 1=white, printer needs 1=black)
-        """
-        # if fb.width != 384:
-        #     raise ValueError("FrameBuffer width must be 384 pixels")
-
-        # Get the raw buffer datab)
-        buf = bytearray(fb)
-
-        # Invert if needed (framebuf: 1=white, printer: 0xFF=black)
-        if invert:
-            for i in range(len(buf)):
-                buf[i] = ~buf[i] & 0xFF
-
-        await self.print_raster_image(buf, width=384, height=10)
-        # if fb.width != 384:
-        #     raise ValueError("FrameBuffer width must be 384 pixels")
-        # if fb.width != 384:
-        #     raise ValueError("FrameBuffer width must be 384 pixels")
 
     async def feed_lines(self, lines=1):
         """Feed paper"""
