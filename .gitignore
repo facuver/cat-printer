@@ -11,3 +11,5 @@ wheels/
 typings/dht.pyi
 typings/.lock
 typings/_mpy_shed/IRQs.pyi
+
+typings/
