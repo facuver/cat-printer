@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Thermal Printer Pro</title>
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.3/cdn.min.js"
+            defer
+        ></script>
+        <style>
+            * {
+                margin: 2;
+                padding: 1;
+                box-sizing: border-box;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    sans-serif;
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                color: white;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }
+            .container {
+                background: #ffffff;
+                color: #333;
+                border-radius: 20px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                max-width: 500px;
+                width: 100%;
+                padding: 30px;
+            }
+            h1 {
+                text-align: center;
+                margin-bottom: 10px;
+            }
+            .subtitle {
+                text-align: center;
+                color: #666;
+                margin-bottom: 30px;
+                font-size: 14px;
+            }
+            .upload-area {
+                border: 3px dashed #667eea;
+                border-radius: 15px;
+                padding: 40px 20px;
+                text-align: center;
+                cursor: pointer;
+                background: #f8f9ff;
+                margin-bottom: 20px;
+                transition: all 0.3s;
+            }
+            .upload-area:hover {
+                background: #eef1ff;
+                border-color: #5568d3;
+            }
+            .upload-area.processing {
+                background: #fff5e1;
+                border-color: #ffa500;
+            }
+            #processedCanvas {
+                max-width: 100%;
+                height: auto;
+                background: #f0f0f0;
+                border: 1px solid #ccc;
+                image-rendering: pixelated;
+                image-rendering: crisp-edges;
+                display: block;
+                margin: 0 auto;
+            }
+            .controls {
+                display: grid;
+                gap: 15px;
+                margin-top: 20px;
+            }
+            .control-group {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+            .control-label {
+                display: flex;
+                justify-content: space-between;
+                font-size: 14px;
+            }
+            .btn {
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: 0.3s;
+                width: 100%;
+            }
+            .btn-primary {
+                background: #667eea;
+                color: white;
+                margin-top: 10px;
+            }
+            .btn-primary:hover:not(:disabled) {
+                background: #5568d3;
+                transform: translateY(-2px);
+                box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            }
+            .btn-primary:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+            }
+            .btn-primary.htmx-request {
+                background: #ffa500;
+                position: relative;
+                overflow: hidden;
+            }
+            .btn-primary.htmx-request::after {
+                content: "⚡ Streaming...";
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 50%;
+                transform: translateY(-50%);
+            }
+            .debug-info {
+                font-family: monospace;
+                font-size: 11px;
+                background: #eee;
+                padding: 10px;
+                border-radius: 5px;
+                margin-top: 15px;
+                white-space: pre-wrap;
+                min-height: 40px;
+            }
+            .debug-info.htmx-swapping {
+                background: #d4edda;
+            }
+            .progress-bar {
+                width: 100%;
+                height: 4px;
+                background: #eee;
+                border-radius: 2px;
+                margin-top: 10px;
+                overflow: hidden;
+                display: none;
+            }
+            .progress-bar.active {
+                display: block;
+            }
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #667eea, #764ba2);
+                width: 0%;
+                transition: width 0.3s;
+            }
+        </style>
+    </head>
+    <body x-data="thermalPrinter()">
+        <div class="container">
+            <h1>🖨️ Thermal Printer</h1>
+            <p class="subtitle">384px Binary Streamer</p>
+
+            <div
+                class="upload-area"
+                @click="$refs.fileInput.click()"
+                @dragover.prevent
+                @drop.prevent="handleDrop"
+                :class="{ 'processing': isProcessing }"
+            >
+                <div>📸 Click or Drag Image</div>
+                <input
+                    type="file"
+                    x-ref="fileInput"
+                    accept="image/*"
+                    style="display: none"
+                    @change="handleFileSelect"
+                />
+            </div>
+
+            <canvas x-ref="canvas" id="processedCanvas"></canvas>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label class="control-label">
+                        Brightness <span x-text="brightness"></span>
+                    </label>
+                    <input
+                        type="range"
+                        x-model.number="brightness"
+                        @input.debounce.10ms="processImage"
+                        min="-100"
+                        max="100"
+                    />
+                </div>
+                <div class="control-group">
+                    <label class="control-label">
+                        Threshold <span x-text="threshold"></span>
+                    </label>
+                    <input
+                        type="range"
+                        x-model.number="threshold"
+                        @input.debounce.100ms="processImage"
+                        min="0"
+                        max="255"
+                    />
+                </div>
+                <div style="display: flex; gap: 10px">
+                    <input
+                        type="checkbox"
+                        x-model="useDither"
+                        @change="processImage"
+                        id="dither"
+                    />
+                    <label for="dither">Floyd-Steinberg Dither</label>
+                </div>
+            </div>
+
+            <div
+                class="debug-info"
+                x-html="debugMessage"
+                :class="{ 'updating': isProcessing }"
+            ></div>
+
+            <div class="progress-bar" :class="{ 'active': isPrinting }">
+                <div class="progress-fill" :style="`width: ${progress}%`"></div>
+            </div>
+
+            <button
+                class="btn btn-primary"
+                @click="printImage"
+                :disabled="!originalImage || isPrinting"
+                :class="{ 'printing': isPrinting }"
+            >
+                <span x-show="!isPrinting">🖨️ Stream to Pico</span>
+                <span x-show="isPrinting">⚡ Streaming...</span>
+            </button>
+        </div>
+
+        <script>
+            function thermalPrinter() {
+                return {
+                    // Constants
+                    PRINTER_WIDTH: 384,
+                    BYTES_PER_LINE: 48,
+
+                    // State
+                    originalImage: null,
+                    canvas: null,
+                    ctx: null,
+                    brightness: 0,
+                    threshold: 128,
+                    useDither: true,
+                    debugMessage: "System Ready...",
+                    isProcessing: false,
+                    isPrinting: false,
+                    progress: 0,
+
+                    init() {
+                        this.canvas = this.$refs.canvas;
+                        this.ctx = this.canvas.getContext("2d", {
+                            willReadFrequently: true,
+                        });
+                    },
+
+                    handleFileSelect(event) {
+                        const file = event.target.files[0];
+                        if (file) this.loadImage(file);
+                    },
+
+                    handleDrop(event) {
+                        const file = event.dataTransfer.files[0];
+                        if (file && file.type.startsWith("image/")) {
+                            this.loadImage(file);
+                        }
+                    },
+
+                    loadImage(file) {
+                        this.isProcessing = true;
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                this.originalImage = img;
+                                this.processImage();
+                                this.isProcessing = false;
+                            };
+                            img.src = e.target.result;
+                        };
+                        reader.readAsDataURL(file);
+                    },
+
+                    processImage() {
+                        if (!this.originalImage) return;
+
+                        const ratio =
+                            this.PRINTER_WIDTH / this.originalImage.width;
+                        const newHeight = Math.floor(
+                            this.originalImage.height * ratio,
+                        );
+
+                        this.canvas.width = this.PRINTER_WIDTH;
+                        this.canvas.height = newHeight;
+
+                        this.ctx.drawImage(
+                            this.originalImage,
+                            0,
+                            0,
+                            this.PRINTER_WIDTH,
+                            newHeight,
+                        );
+                        let imgData = this.ctx.getImageData(
+                            0,
+                            0,
+                            this.PRINTER_WIDTH,
+                            newHeight,
+                        );
+
+                        // Apply brightness
+                        const data = imgData.data;
+                        for (let i = 0; i < data.length; i += 4) {
+                            data[i] += this.brightness;
+                            data[i + 1] += this.brightness;
+                            data[i + 2] += this.brightness;
+                        }
+
+                        // Apply dithering or threshold
+                        if (this.useDither) {
+                            this.applyDithering(imgData);
+                        } else {
+                            this.applyThreshold(imgData, this.threshold);
+                        }
+
+                        this.ctx.putImageData(imgData, 0, 0);
+                        this.drawDebugGrid();
+
+                        this.debugMessage = `Image: 384x${newHeight}<br>Total Bytes: ${newHeight * this.BYTES_PER_LINE}`;
+                    },
+
+                    applyThreshold(imgData, t) {
+                        const d = imgData.data;
+                        for (let i = 0; i < d.length; i += 4) {
+                            const avg = (d[i] + d[i + 1] + d[i + 2]) / 3;
+                            const val = avg < t ? 0 : 255;
+                            d[i] = d[i + 1] = d[i + 2] = val;
+                        }
+                    },
+
+                    applyDithering(image) {
+                        const width = image.width;
+                        const height = image.height;
+                        const data = image.data;
+
+                        for (let y = 0; y < height; y++) {
+                            for (let x = 0; x < width; x++) {
+                                const i = (y * width + x) * 4;
+                                const oldR = data[i];
+                                const newR = oldR < 128 ? 0 : 255;
+                                data[i] = data[i + 1] = data[i + 2] = newR;
+                                const err = oldR - newR;
+
+                                const distributeError = (nx, ny, weight) => {
+                                    if (
+                                        nx >= 0 &&
+                                        nx < width &&
+                                        ny >= 0 &&
+                                        ny < height
+                                    ) {
+                                        const ni = (ny * width + nx) * 4;
+                                        data[ni] += err * weight;
+                                    }
+                                };
+                                distributeError(x + 1, y, 7 / 16);
+                                distributeError(x - 1, y + 1, 3 / 16);
+                                distributeError(x, y + 1, 5 / 16);
+                                distributeError(x + 1, y + 1, 1 / 16);
+                            }
+                        }
+                    },
+
+                    drawDebugGrid() {
+                        this.ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+                        this.ctx.lineWidth = 1;
+                        for (let x = 0; x <= this.PRINTER_WIDTH; x += 8) {
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(x, 0);
+                            this.ctx.lineTo(x, this.canvas.height);
+                            this.ctx.stroke();
+                        }
+                    },
+
+                    convertToBitmap() {
+                        const imgData = this.ctx.getImageData(
+                            0,
+                            0,
+                            this.PRINTER_WIDTH,
+                            this.canvas.height,
+                        );
+                        const data = imgData.data;
+                        const bitmap = new Uint8Array(
+                            this.BYTES_PER_LINE * this.canvas.height,
+                        );
+
+                        const height = this.canvas.height;
+
+                        // Process from bottom to top, right to left (180° rotation)
+                        for (let y = 0; y < height; y++) {
+                            for (
+                                let xByte = 0;
+                                xByte < this.BYTES_PER_LINE;
+                                xByte++
+                            ) {
+                                let byte = 0;
+                                for (let bit = 0; bit < 8; bit++) {
+                                    const x = xByte * 8 + bit;
+                                    const i = (y * this.PRINTER_WIDTH + x) * 4;
+                                    if (data[i] < 128) {
+                                        byte |= 0x80 >> bit;
+                                    }
+                                }
+                                // Write to rotated position: flip both y and x
+                                const rotatedY = height - 1 - y;
+                                const rotatedXByte =
+                                    this.BYTES_PER_LINE - 1 - xByte;
+
+                                // Also reverse bits within the byte for horizontal flip
+                                let reversedByte = 0;
+                                for (let b = 0; b < 8; b++) {
+                                    if (byte & (1 << b)) {
+                                        reversedByte |= 0x80 >> b;
+                                    }
+                                }
+
+                                bitmap[
+                                    rotatedY * this.BYTES_PER_LINE +
+                                        rotatedXByte
+                                ] = reversedByte;
+                            }
+                        }
+                        return bitmap;
+                    },
+
+                    async printImage() {
+                        if (!this.originalImage) {
+                            alert("Please upload an image first");
+                            return;
+                        }
+
+                        const bitmap = this.convertToBitmap();
+                        const CHUNK_SIZE = 1920 * 8;
+                        const totalChunks = Math.ceil(
+                            bitmap.length / CHUNK_SIZE,
+                        );
+
+                        this.isPrinting = true;
+                        this.progress = 0;
+                        this.debugMessage = "⚡ Starting Aligned Stream...";
+
+                        try {
+                            for (let i = 0; i < totalChunks; i++) {
+                                const start = i * CHUNK_SIZE;
+                                const end = Math.min(
+                                    start + CHUNK_SIZE,
+                                    bitmap.length,
+                                );
+                                const chunk = bitmap.slice(start, end);
+
+                                const response = await fetch("/print", {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type":
+                                            "application/octet-stream",
+                                        "X-Chunk-Index": i.toString(),
+                                        "X-Total-Chunks":
+                                            totalChunks.toString(),
+                                    },
+                                    body: chunk,
+                                    signal: AbortSignal.timeout(25000),
+                                });
+
+                                if (!response.ok)
+                                    throw new Error(
+                                        `Server error on chunk ${i}`,
+                                    );
+
+                                this.progress = Math.round(
+                                    ((i + 1) / totalChunks) * 100,
+                                );
+                                this.debugMessage = `📤 Sent ${this.progress}%`;
+
+                                await new Promise((r) => setTimeout(r, 2));
+                            }
+
+                            await fetch("/feed", { method: "POST" });
+                            this.debugMessage = "✅ Print Successful!";
+                        } catch (e) {
+                            this.debugMessage = `❌ Error: ${e.message}`;
+                        } finally {
+                            this.isPrinting = false;
+                            this.progress = 0;
+                        }
+                    },
+                };
+            }
+        </script>
+    </body>
+</html>

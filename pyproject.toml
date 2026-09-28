@@ -5,4 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "bleak>=2.1.1",
+    "imgui-bundle>=1.92.5",
+    "pillow>=12.1.0",
+    "simplepyble>=0.12.1",
 ]

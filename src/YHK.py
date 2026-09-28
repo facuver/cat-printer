@@ -1,30 +1,44 @@
 import asyncio, struct, aioble, bluetooth
+import framebuf
 
 # Constants
-PRINTER_NAME = "YHK-4118"
+PRINTER_NAME = "YHK"
 WIDTH_BYTES = 48  # 384 px / 8
+
 BATCH_LINES = 20  # Send 20 lines per command (960 bytes) to reduce overhead
 
+WIDTH=384
+HEIGHT=32
 
 
 
 
 class YHKPrinter:
     def __init__(self):
+        self.buff = bytearray(WIDTH //  8*HEIGHT)
+        self.fb = framebuf.FrameBuffer(self.buff,WIDTH,HEIGHT,framebuf.MONO_HLSB)
         self.device = None
         self.connection = None
         self.rx = None
-        self.mtu = 23  # Default BLE MTU
+        self.mtu = 23  # Default BLE MTU+
+
+    async def print_text(self,text,microfont):
+        for line in text.split("\n"):
+            self.fb.fill(0)
+            microfont.write(line, self.fb, framebuf.MONO_HLSB, WIDTH, HEIGHT, 0, 0, 1)
+
+            await self.print_bitmap(self.buff)
+        print("sending: ",text)
+
 
     async def scan(self, timeout_ms=10000):
         """Scan for the printer"""
-        print(f"🔍 Scanning for {PRINTER_NAME}...")
 
         async with aioble.scan(
             timeout_ms, interval_us=30000, window_us=30000, active=True
         ) as scanner:
             async for result in scanner:
-                if result.name() == PRINTER_NAME:
+                if result.name() and result.name().startswith(PRINTER_NAME):
                     print(f"✅ Found: {result.name()}")
                     return result.device
 

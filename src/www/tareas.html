@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chore Receipt</title>
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.3/cdn.min.js"
+            defer
+        ></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }
+            .container {
+                background: #ffffff;
+                color: #333;
+                border-radius: 20px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                max-width: 500px;
+                width: 100%;
+                padding: 30px;
+            }
+            h1 {
+                text-align: center;
+                margin-bottom: 10px;
+                font-size: 28px;
+            }
+            .subtitle {
+                text-align: center;
+                color: #666;
+                margin-bottom: 30px;
+                font-size: 14px;
+            }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            label {
+                display: block;
+                margin-bottom: 8px;
+                font-weight: 600;
+                color: #555;
+            }
+            select,
+            textarea {
+                width: 100%;
+                padding: 12px;
+                border: 2px solid #e0e0e0;
+                border-radius: 10px;
+                font-size: 16px;
+                font-family: inherit;
+                transition: border-color 0.3s;
+            }
+            select:focus,
+            textarea:focus {
+                outline: none;
+                border-color: #667eea;
+            }
+            textarea {
+                resize: vertical;
+                min-height: 80px;
+            }
+            .chores-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .chore-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px;
+                background: #f8f9ff;
+                border-radius: 8px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .chore-item:hover {
+                background: #eef1ff;
+            }
+            .chore-item input[type="checkbox"] {
+                width: 20px;
+                height: 20px;
+                cursor: pointer;
+            }
+            .chore-item label {
+                margin: 0;
+                cursor: pointer;
+                font-weight: 400;
+                flex: 1;
+            }
+            .btn {
+                width: 100%;
+                padding: 15px;
+                border: none;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: 0.3s;
+            }
+            .btn-primary {
+                background: #667eea;
+                color: white;
+                margin-bottom: 10px;
+            }
+            .btn-primary:hover:not(:disabled) {
+                background: #5568d3;
+                transform: translateY(-2px);
+                box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            }
+            .btn-primary:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+            }
+            .btn-secondary {
+                background: #f0f0f0;
+                color: #333;
+            }
+            .btn-secondary:hover {
+                background: #e0e0e0;
+            }
+            .receipt-preview {
+                margin-top: 20px;
+                border: 2px dashed #333;
+                border-radius: 10px;
+                padding: 10px;
+                background: #f9f9f9;
+                display: none;
+            }
+            .receipt-preview.show {
+                display: block;
+            }
+            .receipt-preview canvas {
+                display: block;
+                margin: 0 auto;
+                max-width: 100%;
+                height: auto;
+                background: white;
+                image-rendering: pixelated;
+                image-rendering: crisp-edges;
+            }
+            .status {
+                text-align: center;
+                padding: 10px;
+                border-radius: 8px;
+                margin-top: 15px;
+                font-size: 14px;
+            }
+            .status.success {
+                background: #d4edda;
+                color: #155724;
+            }
+            .status.error {
+                background: #f8d7da;
+                color: #721c24;
+            }
+        </style>
+    </head>
+    <body x-data="choreReceipt()">
+        <div class="container">
+            <h1>🧹 Chore Receipt</h1>
+            <p class="subtitle">Track household contributions</p>
+
+            <div class="form-group">
+                <label for="person">Who did the chores?</label>
+                <select id="person" x-model="person">
+                    <option value="">Select person...</option>
+                    <option value="FACU">FACU</option>
+                    <option value="MICA">MICA</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Chores Completed:</label>
+                <div class="chores-grid">
+                    <template x-for="chore in availableChores" :key="chore">
+                        <div class="chore-item" @click="toggleChore(chore)">
+                            <input
+                                type="checkbox"
+                                :checked="selectedChores.includes(chore)"
+                                @click.stop="toggleChore(chore)"
+                            />
+                            <label x-text="chore"></label>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="note">Additional Notes:</label>
+                <textarea
+                    id="note"
+                    x-model="note"
+                    placeholder="Any extra details or special effort..."
+                ></textarea>
+            </div>
+
+            <button
+                class="btn btn-primary"
+                @click="generateReceipt"
+                :disabled="!person || selectedChores.length === 0"
+            >
+                🧾 Generate Receipt
+            </button>
+
+            <div class="receipt-preview" :class="{ 'show': showReceipt }">
+                <canvas x-ref="previewCanvas"></canvas>
+            </div>
+            <!--
+            <button
+                class="btn btn-secondary"
+                @click="printReceipt"
+                x-show="showReceipt"
+                :disabled="isPrinting"
+            >
+                <span x-show="!isPrinting">🖨️ Print to Thermal</span>
+                <span x-show="isPrinting">⚡ Printing...</span>
+            </button>-->
+
+            <div
+                class="status success"
+                x-show="statusMessage && !statusError"
+                x-text="statusMessage"
+            ></div>
+            <div
+                class="status error"
+                x-show="statusError"
+                x-text="statusError"
+            ></div>
+
+            <canvas x-ref="printCanvas" style="display: none"></canvas>
+        </div>
+
+        <script>
+            function choreReceipt() {
+                return {
+                    person: "",
+                    note: "",
+                    selectedChores: [],
+                    availableChores: [
+                        "Dishes",
+                        "Laundry",
+                        "Vacuuming",
+                        "Dusting",
+                        "Bathroom",
+                        "Kitchen",
+                        "Trash",
+                        "Recycling",
+                        "Mopping",
+                        "Windows",
+                        "Organizing",
+                        "Groceries",
+                    ],
+                    showReceipt: false,
+                    currentDate: "",
+                    currentTime: "",
+                    receiptNumber: "",
+                    isPrinting: false,
+                    statusMessage: "",
+                    statusError: "",
+                    PRINTER_WIDTH: 384,
+                    BYTES_PER_LINE: 48,
+
+                    toggleChore(chore) {
+                        const index = this.selectedChores.indexOf(chore);
+                        if (index > -1) {
+                            this.selectedChores.splice(index, 1);
+                        } else {
+                            this.selectedChores.push(chore);
+                        }
+                    },
+
+                    generateReceipt() {
+                        const now = new Date();
+                        this.currentDate = now.toLocaleDateString("en-US", {
+                            weekday: "short",
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                        });
+                        this.currentTime = now.toLocaleTimeString("en-US", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                        });
+                        this.receiptNumber =
+                            "#" +
+                            Math.floor(Math.random() * 100000)
+                                .toString()
+                                .padStart(5, "0");
+
+                        this.renderReceipt();
+                        this.printReceipt();
+                        this.showReceipt = true;
+                        this.statusMessage = "";
+                        this.statusError = "";
+                    },
+
+                    renderReceipt() {
+                        const canvas = this.$refs.previewCanvas;
+                        const ctx = canvas.getContext("2d");
+
+                        // Calculate height
+                        const lineHeight = 25;
+                        const headerLines = 5;
+                        const infoLines = 4;
+                        const choreLines = this.selectedChores.length + 2;
+                        const noteLines = this.note
+                            ? Math.ceil(this.note.length / 40) + 3
+                            : 0;
+                        const footerLines = 5;
+                        const totalLines =
+                            headerLines +
+                            infoLines +
+                            choreLines +
+                            noteLines +
+                            footerLines;
+
+                        canvas.width = this.PRINTER_WIDTH;
+                        canvas.height = totalLines * lineHeight + 20;
+
+                        // White background
+                        ctx.fillStyle = "#FFFFFF";
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        // Black text
+                        ctx.fillStyle = "#000000";
+
+                        let y = 40;
+
+                        // Draw horizontal line helper
+                        const drawLine = (yPos, width = canvas.width - 40) => {
+                            ctx.beginPath();
+                            ctx.moveTo(20, yPos);
+                            ctx.lineTo(20 + width, yPos);
+                            ctx.strokeStyle = "#000000";
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                        };
+
+                        const drawDashedLine = (
+                            yPos,
+                            width = canvas.width - 40,
+                        ) => {
+                            ctx.beginPath();
+                            ctx.setLineDash([5, 5]);
+                            ctx.moveTo(20, yPos);
+                            ctx.lineTo(20 + width, yPos);
+                            ctx.strokeStyle = "#000000";
+                            ctx.lineWidth = 1;
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        };
+                        // Dashed rectangle border around the entire receipt
+                        // ctx.strokeStyle = "#000000";
+                        // ctx.lineWidth = 1;
+                        // ctx.setLineDash([5, 5]); // Set dashed pattern
+                        // ctx.strokeRect(0, 0, canvas.width, canvas.height);
+                        // ctx.setLineDash([]); // Reset line dash to solid
+                        // Header
+                        ctx.font = "bold 34px monospace";
+                        ctx.textAlign = "center";
+                        ctx.fillText("★ CHORE RECEIPT ★", canvas.width / 2, y);
+                        y += 30;
+
+                        ctx.font = "24px monospace";
+                        ctx.fillText(
+                            "Household Productivity Ltd.",
+                            canvas.width / 2,
+                            y,
+                        );
+                        y += 25;
+
+                        drawLine(y);
+                        y += 30;
+
+                        // Info section
+                        ctx.font = "20px monospace";
+                        ctx.textAlign = "left";
+                        ctx.fillText(`PERSON: `, 20, y);
+
+                        ctx.font = "bold 20px monospace ";
+                        ctx.fillText(this.person, 120, y);
+
+                        ctx.font = "20px monospace";
+                        y += 25;
+                        ctx.fillText(`DATE: ${this.currentDate}`, 20, y);
+                        y += 25;
+                        ctx.fillText(`TIME: ${this.currentTime}`, 20, y);
+                        y += 25;
+                        ctx.fillText(`RECEIPT: ${this.receiptNumber}`, 20, y);
+                        y += 25;
+
+                        drawDashedLine(y);
+                        y += 30;
+
+                        // Chores section
+                        ctx.font = "bold 20px monospace";
+                        ctx.fillText("TASKS COMPLETED:", 20, y);
+                        y += 30;
+
+                        ctx.font = "20px monospace";
+                        this.selectedChores.forEach((chore) => {
+                            ctx.fillText(`✓ ${chore}`, 30, y);
+                            y += 25;
+                        });
+
+                        y += 15;
+                        drawLine(y);
+                        y += 25;
+
+                        ctx.font = "bold 24px monospace";
+                        ctx.fillText(
+                            `TOTAL CHORES: ${this.selectedChores.length}`,
+                            20,
+                            y,
+                        );
+                        y += 30;
+
+                        // Notes section
+                        if (this.note) {
+                            drawDashedLine(y);
+                            y += 25;
+
+                            ctx.font = "bold 20px monospace";
+                            ctx.fillText("NOTES:", 20, y);
+                            y += 25;
+
+                            ctx.font = "20px monospace";
+                            const maxWidth = canvas.width - 50;
+                            const words = this.note.split(" ");
+                            let line = "";
+
+                            words.forEach((word, i) => {
+                                const testLine = line + word + " ";
+                                const metrics = ctx.measureText(testLine);
+
+                                if (metrics.width > maxWidth && line !== "") {
+                                    ctx.fillText(line, 30, y);
+                                    y += 20;
+                                    line = word + " ";
+                                } else {
+                                    line = testLine;
+                                }
+                            });
+                            ctx.fillText(line, 30, y);
+                            y += 30;
+                        }
+
+                        // Footer
+                        drawDashedLine(y);
+                        y += 30;
+
+                        ctx.font = "bold 24px monospace";
+                        ctx.textAlign = "center";
+                        ctx.fillText(
+                            "★★★ EXCELLENT WORK! ★★★",
+                            canvas.width / 2,
+                            y,
+                        );
+                        y += 25;
+
+                        ctx.font = "20px monospace";
+                        ctx.fillText(
+                            "Keep up the great housekeeping!",
+                            canvas.width / 2,
+                            y,
+                        );
+                        y += 30;
+
+                        ctx.font = "18px monospace";
+                        ctx.fillText(
+                            "Thank you for your contribution!",
+                            canvas.width / 2,
+                            y,
+                        );
+                    },
+
+                    async printReceipt() {
+                        this.isPrinting = true;
+                        this.statusMessage = "";
+                        this.statusError = "";
+
+                        try {
+                            // Use the preview canvas for printing
+                            const canvas = this.$refs.previewCanvas;
+                            const ctx = canvas.getContext("2d", {
+                                willReadFrequently: true,
+                            });
+
+                            // Convert to bitmap and print
+                            const bitmap = this.convertToBitmap(
+                                ctx,
+                                canvas.width,
+                                canvas.height,
+                            );
+
+                            const CHUNK_SIZE = 1920 * 8;
+                            const totalChunks = Math.ceil(
+                                bitmap.length / CHUNK_SIZE,
+                            );
+
+                            for (let i = 0; i < totalChunks; i++) {
+                                const start = i * CHUNK_SIZE;
+                                const end = Math.min(
+                                    start + CHUNK_SIZE,
+                                    bitmap.length,
+                                );
+                                const chunk = bitmap.slice(start, end);
+
+                                const response = await fetch("/print", {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type":
+                                            "application/octet-stream",
+                                        "X-Chunk-Index": i.toString(),
+                                        "X-Total-Chunks":
+                                            totalChunks.toString(),
+                                    },
+                                    body: chunk,
+                                    signal: AbortSignal.timeout(25000),
+                                });
+
+                                if (!response.ok)
+                                    throw new Error(
+                                        `Server error on chunk ${i}`,
+                                    );
+                                await new Promise((r) => setTimeout(r, 2));
+                            }
+
+                            await fetch("/feed", { method: "POST" });
+                            this.statusMessage =
+                                "✅ Receipt printed successfully!";
+                        } catch (e) {
+                            this.statusError = `❌ Print error: ${e.message}`;
+                        } finally {
+                            this.isPrinting = false;
+                        }
+                    },
+
+                    convertToBitmap(ctx, width, height) {
+                        const imgData = ctx.getImageData(0, 0, width, height);
+                        const data = imgData.data;
+                        const bitmap = new Uint8Array(
+                            this.BYTES_PER_LINE * height,
+                        );
+
+                        for (let y = 0; y < height; y++) {
+                            for (
+                                let xByte = 0;
+                                xByte < this.BYTES_PER_LINE;
+                                xByte++
+                            ) {
+                                let byte = 0;
+                                for (let bit = 0; bit < 8; bit++) {
+                                    const x = xByte * 8 + bit;
+                                    if (x < width) {
+                                        const i = (y * width + x) * 4;
+                                        // Get RGB values
+                                        const r = data[i];
+                                        const g = data[i + 1];
+                                        const b = data[i + 2];
+                                        const avg = (r + g + b) / 3;
+
+                                        // If pixel is dark (black text), set bit
+                                        if (avg < 128) {
+                                            byte |= 0x80 >> bit;
+                                        }
+                                    }
+                                }
+                                // 180° rotation
+                                const rotatedY = height - 1 - y;
+                                const rotatedXByte =
+                                    this.BYTES_PER_LINE - 1 - xByte;
+                                let reversedByte = 0;
+                                for (let b = 0; b < 8; b++) {
+                                    if (byte & (1 << b)) {
+                                        reversedByte |= 0x80 >> b;
+                                    }
+                                }
+                                bitmap[
+                                    rotatedY * this.BYTES_PER_LINE +
+                                        rotatedXByte
+                                ] = reversedByte;
+                            }
+                        }
+                        return bitmap;
+                    },
+                };
+            }
+        </script>
+    </body>
+</html>
